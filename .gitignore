@@ -1,0 +1,13 @@
+# Dépendances Node
+node_modules/
+
+# Variables d'environnement (contient la clé API)
+.env
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
