@@ -1,51 +1,117 @@
 /* ============================================================
-   AF Dépannage – Chatbot Widget (IA Claude + saisie libre)
+   AF Dépannage – Chatbot Widget (logique 100% côté client)
+   - Détection mots-clés pour diagnostic plomberie
+   - 2-3 échanges max puis redirection vers Fabien
    ============================================================ */
-
 'use strict';
 
 /* ── Configuration ──────────────────────────────────────────── */
 const PHONE_NUMBER    = 'tel:+33XXXXXXXXX';           // ← remplacer par le vrai numéro
 const WHATSAPP_NUMBER = 'https://wa.me/33XXXXXXXXX';  // ← remplacer par le vrai numéro
-const API_ENDPOINT    = '/api/chat';
-const MAX_AI_TURNS    = 3;  // après X échanges IA, bloquer la saisie
+const MAX_AI_TURNS    = 3;
+
+/* ── Base de connaissances plomberie ──────────────────────── */
+const KNOWLEDGE_BASE = [
+  {
+    keywords: ['fuite', 'fuit', 'goutte', 'gouttes', 'écoule', 'eau qui coule', 'eau partout'],
+    responses: [
+      "Une fuite, c'est à traiter rapidement. <strong>Premier geste :</strong> coupez l'arrivée d'eau générale (vanne au compteur ou sous l'évier).<br><br>Pouvez-vous me dire <strong>où se trouve la fuite</strong> exactement ? (sous évier, robinet, WC, chauffe-eau, mur, plafond…)",
+      "D'accord. <strong>En attendant l'intervention :</strong><br>• Placez une bassine ou des serviettes pour limiter les dégâts<br>• Coupez l'électricité de la zone si l'eau approche des prises<br>• Prenez une photo de la fuite (utile pour l'assurance)<br><br>Fabien intervient rapidement sur Locminé et alentours. Voulez-vous l'appeler maintenant ou être rappelé ?",
+    ]
+  },
+  {
+    keywords: ['wc', 'toilette', 'toilettes', 'chasse', 'cuvette', 'bouché', 'bouche'],
+    responses: [
+      "Problème de WC, je vois. Pour mieux vous aider : est-ce que c'est <strong>bouché</strong>, que la <strong>chasse fuit en continu</strong>, ou autre chose ?<br><br><em>💡 Si c'est bouché : évitez d'utiliser plusieurs fois la chasse, ça risque de déborder. Une ventouse peut parfois suffire pour un bouchon léger.</em>",
+      "Compris. <strong>Avant l'intervention :</strong><br>• N'utilisez plus les WC pour éviter tout débordement<br>• Coupez le robinet d'arrivée d'eau derrière la cuvette (petite vanne)<br>• Si la chasse fuit : c'est souvent le joint ou le mécanisme à remplacer, une réparation rapide<br><br>Fabien peut intervenir aujourd'hui. Voulez-vous l'appeler ou être rappelé ?",
+    ]
+  },
+  {
+    keywords: ['chauffe-eau', 'chauffe eau', 'ballon', 'eau chaude', 'pas chaud', 'froide'],
+    responses: [
+      "Souci de chauffe-eau. Quelques questions pour cerner le problème :<br>• L'eau est <strong>froide</strong> ou <strong>tiède</strong> ?<br>• Le ballon <strong>fuit</strong> ou <strong>fait du bruit</strong> ?<br>• Il a quel âge environ ?<br><br><em>💡 Si vous avez un disjoncteur dédié au chauffe-eau, vérifiez qu'il n'a pas sauté.</em>",
+      "Merci pour les infos. <strong>En attendant :</strong><br>• Coupez l'électricité du chauffe-eau au tableau (sécurité)<br>• S'il fuit : coupez aussi l'arrivée d'eau du ballon<br>• Notez la marque/modèle si possible<br><br>Fabien diagnostique et répare la plupart des chauffe-eaux (résistance, thermostat, groupe de sécurité). Voulez-vous l'appeler ?",
+    ]
+  },
+  {
+    keywords: ['robinet', 'mitigeur', 'évier', 'evier', 'lavabo'],
+    responses: [
+      "Problème de robinet. C'est plutôt :<br>• Une <strong>fuite</strong> au niveau du bec ou de la base ?<br>• Le robinet qui <strong>tourne dans le vide</strong> ?<br>• De l'eau qui <strong>coule mal</strong> ou pas du tout ?<br><br><em>💡 Pour une petite fuite, vous pouvez fermer la vanne sous l'évier en attendant.</em>",
+      "Bien noté. <strong>Conseils en attendant :</strong><br>• Fermez la vanne d'arrêt sous l'évier (eau chaude + froide)<br>• Si c'est juste un mitigeur, c'est souvent une cartouche à changer (réparation rapide)<br>• Si le robinet est ancien, un remplacement complet peut être plus économique à long terme<br><br>Fabien peut passer rapidement. Vous préférez l'appeler ou être rappelé ?",
+    ]
+  },
+  {
+    keywords: ['canalisation', 'évacuation', 'evacuation', 'tuyau', 'engorgé', 'odeur', 'remonte'],
+    responses: [
+      "Canalisation bouchée ou qui remonte. Pour bien comprendre :<br>• C'est à quel niveau ? (douche, évier, WC, sol)<br>• Ça <strong>évacue lentement</strong> ou <strong>plus du tout</strong> ?<br>• Avez-vous des <strong>odeurs</strong> qui remontent ?<br><br><em>💡 Évitez les déboucheurs chimiques agressifs, ils peuvent abîmer les joints et tuyauteries.</em>",
+      "OK. <strong>En attendant Fabien :</strong><br>• N'utilisez plus le point d'eau concerné<br>• Pour une légère obstruction : eau très chaude + bicarbonate + vinaigre peuvent aider<br>• Pour un blocage important : il faudra un débouchage mécanique (furet) ou hydraulique<br><br>Fabien a le matériel professionnel pour déboucher proprement. On organise l'intervention ?",
+    ]
+  },
+  {
+    keywords: ['radiateur', 'chauffage', 'froid', 'purger', 'purge', 'chaudière'],
+    responses: [
+      "Souci de chauffage. Pour bien diagnostiquer :<br>• <strong>Un seul radiateur</strong> froid ou <strong>tous</strong> ?<br>• Il est froid <strong>en haut</strong> ou <strong>en bas</strong> ?<br>• Entendez-vous des <strong>bruits</strong> (gargouillis, claquements) ?<br><br><em>💡 Radiateur froid en haut : souvent une purge à faire. Radiateur froid en bas : peut être un problème de circulation ou de boue.</em>",
+      "D'accord. <strong>Ce que vous pouvez vérifier :</strong><br>• La pression de la chaudière (entre 1 et 1,5 bar normalement)<br>• Si un radiateur a besoin d'être purgé : clé de purge + chiffon, ouvrir doucement jusqu'à l'eau<br>• Si vraiment tout est froid : vérifier que la chaudière n'est pas en défaut<br><br>Pour un diagnostic complet, Fabien peut passer. On prend rendez-vous ?",
+    ]
+  },
+  {
+    keywords: ['installation', 'installer', 'poser', 'nouveau', 'changement', 'remplacer', 'rénovation', 'renovation'],
+    responses: [
+      "Très bien, un projet d'installation ! Pour préparer le devis, dites-moi :<br>• Quel <strong>équipement</strong> ? (WC, lavabo, douche, baignoire, chauffe-eau, mitigeur…)<br>• C'est un <strong>remplacement</strong> ou une <strong>première installation</strong> ?<br>• Avez-vous déjà <strong>acheté le matériel</strong> ou besoin de conseils ?",
+      "Parfait. Fabien établit un <strong>devis gratuit et sans engagement</strong> après une visite ou sur photos pour les cas simples. Il fournit aussi le matériel si besoin (souvent à meilleur prix qu'en grande surface).<br><br>Pour avancer, le plus simple est d'échanger directement avec lui. Voulez-vous l'appeler ou être rappelé ?",
+    ]
+  },
+  {
+    keywords: ['devis', 'prix', 'tarif', 'coût', 'cout', 'combien'],
+    responses: [
+      "Bonne question ! Fabien établit un <strong>devis gratuit et sans engagement</strong>. Le tarif dépend de plusieurs facteurs :<br>• La nature de l'intervention<br>• L'urgence (jour, soir, week-end)<br>• Le matériel à fournir<br><br>Pour vous donner une fourchette précise, pouvez-vous me dire <strong>quel type de travaux</strong> vous envisagez ?",
+      "Compris. Pour un devis précis et personnalisé, le mieux est de discuter directement avec Fabien — il pourra évaluer le travail soit par téléphone, soit en se déplaçant.<br><br>Voulez-vous l'appeler maintenant ou laisser votre numéro pour être rappelé ?",
+    ]
+  },
+  {
+    keywords: ['urgent', 'urgence', 'vite', 'rapidement', 'tout de suite', 'maintenant'],
+    responses: [
+      "Compris, c'est urgent. <strong>Fabien intervient 7j/7 sur Locminé et le Morbihan</strong>, souvent en moins d'une heure.<br><br>Pour qu'il vous aide au mieux, dites-moi en quelques mots <strong>quel est le problème</strong> ? (fuite, WC, chauffe-eau, pas d'eau…)",
+      "OK. <strong>Pour une urgence, le plus rapide c'est l'appel direct.</strong> Fabien décroche personnellement et peut être chez vous très vite.<br><br>Appuyez sur le bouton ci-dessous pour l'appeler immédiatement.",
+    ]
+  },
+];
+
+const DEFAULT_RESPONSES = [
+  "Merci pour votre message. Pour mieux vous aider, pouvez-vous préciser :<br>• De quel <strong>équipement</strong> il s'agit ? (WC, robinet, chauffe-eau, canalisation…)<br>• Le <strong>problème exact</strong> ? (fuite, blocage, panne, installation)<br>• Si c'est <strong>urgent</strong> ou planifié ?",
+  "D'accord. Pour traiter votre demande au mieux, le plus efficace est de parler directement avec Fabien. Il pourra vous poser les bonnes questions et vous donner un premier diagnostic.<br><br>Voulez-vous l'appeler maintenant ou être rappelé ?",
+];
+
+const FINAL_MESSAGE = "Merci pour ces précisions. Pour aller plus loin et organiser l'intervention, <strong>Fabien sera plus efficace en direct</strong>. Il pourra confirmer le diagnostic, vous donner un tarif et fixer un rendez-vous.<br><br>👇 Choisissez l'option qui vous convient :";
 
 /* ── État global ────────────────────────────────────────────── */
 const state = {
   open: false,
   started: false,
-  phase: 'chat',      // 'chat' | 'lead_name' | 'lead_phone' | 'done'
+  phase: 'chat',
   aiTurns: 0,
-  history: [],        // [{role, content}]
+  detectedTopic: null,
   pendingName: '',
 };
 
-/* ── Références DOM ─────────────────────────────────────────── */
 let elToggle, elWidget, elMessages, elInput, elSendBtn, elProactive;
 
 /* ── Initialisation ─────────────────────────────────────────── */
 function initChatbot() {
   _buildDOM();
   _bindEvents();
-
-  // Bulle proactive après 5 secondes
   setTimeout(() => {
-    if (!state.open) {
-      elProactive.classList.remove('hidden');
-    }
+    if (!state.open) elProactive.classList.remove('hidden');
   }, 5000);
 }
 
-/* ── Construction du DOM ────────────────────────────────────── */
 function _buildDOM() {
-  // Bulle proactive
   elProactive = document.createElement('div');
   elProactive.className = 'chat-bubble-proactive hidden';
   elProactive.innerHTML = '<strong>💬 Besoin d\'aide ?</strong>Décrivez votre problème, Fabien intervient rapidement !';
   elProactive.addEventListener('click', openChat);
   document.body.appendChild(elProactive);
 
-  // Bouton toggle
   elToggle = document.createElement('button');
   elToggle.className = 'chat-toggle';
   elToggle.setAttribute('aria-label', 'Ouvrir le chat');
@@ -60,7 +126,6 @@ function _buildDOM() {
   `;
   document.body.appendChild(elToggle);
 
-  // Widget
   elWidget = document.createElement('div');
   elWidget.className = 'chat-widget';
   elWidget.setAttribute('role', 'dialog');
@@ -76,14 +141,7 @@ function _buildDOM() {
     <div class="chat-messages" id="chatMessages"></div>
     <div class="chat-footer">
       <div class="chat-input-bar" id="chatInputBar">
-        <textarea
-          id="chatInput"
-          class="chat-textarea"
-          placeholder="Décrivez votre problème…"
-          rows="1"
-          maxlength="600"
-          aria-label="Votre message"
-        ></textarea>
+        <textarea id="chatInput" class="chat-textarea" placeholder="Décrivez votre problème…" rows="1" maxlength="600" aria-label="Votre message"></textarea>
         <button id="chatSendBtn" class="chat-send-btn" aria-label="Envoyer">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
             <line x1="22" y1="2" x2="11" y2="13"/>
@@ -91,7 +149,7 @@ function _buildDOM() {
           </svg>
         </button>
       </div>
-      <p class="chat-footer-note">Réponse par un assistant IA · Fabien Allanic, Locminé (56)</p>
+      <p class="chat-footer-note">Assistant virtuel · Fabien Allanic, Locminé (56)</p>
     </div>
   `;
   document.body.appendChild(elWidget);
@@ -101,10 +159,8 @@ function _buildDOM() {
   elSendBtn  = document.getElementById('chatSendBtn');
 }
 
-/* ── Événements ─────────────────────────────────────────────── */
 function _bindEvents() {
   elToggle.addEventListener('click', toggleChat);
-
   elSendBtn.addEventListener('click', _handleSend);
   elInput.addEventListener('keydown', function(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -112,15 +168,12 @@ function _bindEvents() {
       _handleSend();
     }
   });
-
-  // Auto-resize du textarea
   elInput.addEventListener('input', function() {
     elInput.style.height = 'auto';
     elInput.style.height = Math.min(elInput.scrollHeight, 120) + 'px';
   });
 }
 
-/* ── Ouvrir / fermer ────────────────────────────────────────── */
 function toggleChat() {
   state.open ? closeChat() : openChat();
 }
@@ -131,10 +184,8 @@ function openChat() {
   elToggle.classList.add('open');
   elToggle.setAttribute('aria-expanded', 'true');
   elProactive.classList.add('hidden');
-
   var badge = elToggle.querySelector('.notif-badge');
   if (badge) badge.remove();
-
   if (!state.started) {
     state.started = true;
     _showWelcome();
@@ -150,7 +201,6 @@ function closeChat() {
   elToggle.setAttribute('aria-expanded', 'false');
 }
 
-/* ── Message de bienvenue ───────────────────────────────────── */
 function _showWelcome() {
   _showTyping(700, function() {
     appendBotMessage('&#128075; Bonjour ! Je suis l\'assistant d\'<strong>AF Dépannage</strong>.<br>Décrivez-moi votre problème de plomberie et je vous aide immédiatement.');
@@ -158,8 +208,7 @@ function _showWelcome() {
   });
 }
 
-/* ── Envoi du message utilisateur ───────────────────────────── */
-async function _handleSend() {
+function _handleSend() {
   if (state.phase === 'lead_name') return _submitName();
   if (state.phase === 'lead_phone') return _submitPhone();
   if (state.phase === 'done') return;
@@ -170,63 +219,54 @@ async function _handleSend() {
   elInput.value = '';
   elInput.style.height = 'auto';
   _setSendDisabled(true);
-
   appendUserMessage(text);
 
-  var typing = _showTypingIndicator();
-  var reply  = await _callClaudeAPI(text);
-  typing.remove();
+  var reply = _generateReply(text);
 
-  appendBotMessage(reply);
+  _showTyping(900, function() {
+    appendBotMessage(reply);
+    state.aiTurns++;
+    _setSendDisabled(false);
 
-  state.aiTurns++;
-  _setSendDisabled(false);
+    if (state.aiTurns >= MAX_AI_TURNS) {
+      setTimeout(function() {
+        appendBotMessage(FINAL_MESSAGE);
+        _showContactCTA();
+        _lockInputWithMessage();
+      }, 800);
+    } else if (state.aiTurns >= 2) {
+      setTimeout(_showContactCTA, 600);
+    }
+  });
+}
 
-  // Toujours proposer les boutons de contact après la réponse IA
-  _showContactCTA();
+function _generateReply(userText) {
+  var lower = userText.toLowerCase();
 
-  // Après MAX_AI_TURNS échanges, bloquer la saisie
-  if (state.aiTurns >= MAX_AI_TURNS) {
-    _lockInputWithMessage();
+  if (state.detectedTopic !== null && state.aiTurns === 1) {
+    var topic = KNOWLEDGE_BASE[state.detectedTopic];
+    return topic.responses[1] || DEFAULT_RESPONSES[1];
   }
-}
 
-/* ── Appel à l'API backend ──────────────────────────────────── */
-async function _callClaudeAPI(userMessage) {
-  try {
-    var res = await fetch(API_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: userMessage,
-        history: state.history,
-      }),
-    });
-
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-
-    var data  = await res.json();
-    var reply = data.reply || _fallbackMessage();
-
-    // Mettre à jour l'historique de conversation
-    state.history.push({ role: 'user',      content: userMessage });
-    state.history.push({ role: 'assistant', content: reply });
-
-    return reply;
-
-  } catch (err) {
-    console.warn('[chatbot] Erreur API :', err.message);
-    return _fallbackMessage();
+  for (var i = 0; i < KNOWLEDGE_BASE.length; i++) {
+    var entry = KNOWLEDGE_BASE[i];
+    for (var j = 0; j < entry.keywords.length; j++) {
+      if (lower.indexOf(entry.keywords[j]) !== -1) {
+        if (state.aiTurns === 0) {
+          state.detectedTopic = i;
+          return entry.responses[0];
+        } else {
+          return entry.responses[1] || entry.responses[0];
+        }
+      }
+    }
   }
+
+  var defaultIdx = Math.min(state.aiTurns, DEFAULT_RESPONSES.length - 1);
+  return DEFAULT_RESPONSES[defaultIdx];
 }
 
-function _fallbackMessage() {
-  return 'Je rencontre une petite difficulté technique. Pour une aide immédiate, n\'hésitez pas à appeler Fabien directement — il est disponible et répondra à toutes vos questions !';
-}
-
-/* ── Boutons de contact après réponse IA ───────────────────── */
 function _showContactCTA() {
-  // Supprimer les anciens CTA
   var oldCTA = elMessages.querySelector('.chat-cta-block');
   if (oldCTA) oldCTA.remove();
 
@@ -234,21 +274,18 @@ function _showContactCTA() {
   block.className = 'chat-cta-block';
   block.innerHTML = '<p class="cta-hint">&#128222; Fabien peut intervenir rapidement :</p>';
 
-  // Bouton Appeler
   var callLink = document.createElement('a');
   callLink.href      = PHONE_NUMBER;
   callLink.className = 'chat-call-btn';
   callLink.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.81 19.79 19.79 0 01.04 2.18 2 2 0 012 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 14.92v2z"/></svg> Appeler Fabien maintenant';
   block.appendChild(callLink);
 
-  // Bouton Rappel
-  var callbackBtn    = document.createElement('button');
+  var callbackBtn = document.createElement('button');
   callbackBtn.className = 'chat-call-btn chat-callback-btn';
   callbackBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.81 19.79 19.79 0 01.04 2.18 2 2 0 012 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 14.92v2z"/></svg> Me faire rappeler';
   callbackBtn.addEventListener('click', _startLeadCapture);
   block.appendChild(callbackBtn);
 
-  // Bouton WhatsApp
   var waLink = document.createElement('a');
   waLink.href = WHATSAPP_NUMBER;
   waLink.target = '_blank';
@@ -261,7 +298,6 @@ function _showContactCTA() {
   _scrollToBottom();
 }
 
-/* ── Lead capture – rappel ──────────────────────────────────── */
 function _lockInputWithMessage() {
   _setSendDisabled(true);
   elInput.placeholder = 'Utilisez les boutons ci-dessus pour contacter Fabien.';
@@ -271,11 +307,9 @@ function _lockInputWithMessage() {
 function _startLeadCapture() {
   var ctaBlock = elMessages.querySelector('.chat-cta-block');
   if (ctaBlock) ctaBlock.remove();
-
   state.phase = 'lead_name';
   _setSendDisabled(true);
   elInput.disabled = true;
-
   _showTyping(500, function() {
     appendBotMessage('Super ! Pour que Fabien vous rappelle, j\'ai besoin de votre <strong>prénom</strong> :');
     _renderNameInput();
@@ -285,7 +319,6 @@ function _startLeadCapture() {
 function _renderNameInput() {
   var form = document.createElement('div');
   form.className = 'chat-phone-form';
-
   var input = document.createElement('input');
   input.type = 'text';
   input.id = 'leadName';
@@ -293,18 +326,14 @@ function _renderNameInput() {
   input.placeholder = 'Votre prénom';
   input.maxLength = 50;
   input.autocomplete = 'given-name';
-
   var btn = document.createElement('button');
   btn.className = 'chat-submit-btn';
   btn.textContent = 'Continuer →';
-
   form.appendChild(input);
   form.appendChild(btn);
   elMessages.appendChild(form);
   _scrollToBottom();
-
   setTimeout(function() { input.focus(); }, 100);
-
   btn.addEventListener('click', _submitName);
   input.addEventListener('keydown', function(e) { if (e.key === 'Enter') _submitName(); });
 }
@@ -313,19 +342,12 @@ function _submitName() {
   var input = document.getElementById('leadName');
   if (!input) return;
   var name = input.value.trim();
-  if (!name) {
-    input.classList.add('error');
-    input.focus();
-    return;
-  }
+  if (!name) { input.classList.add('error'); input.focus(); return; }
   state.pendingName = name;
   appendUserMessage(name);
-
   var form = input.closest('.chat-phone-form');
   if (form) form.remove();
-
   state.phase = 'lead_phone';
-
   _showTyping(500, function() {
     appendBotMessage('Merci <strong>' + _esc(name) + '</strong> ! Quel est votre <strong>numéro de téléphone</strong> ?');
     _renderPhoneInput();
@@ -335,7 +357,6 @@ function _submitName() {
 function _renderPhoneInput() {
   var form = document.createElement('div');
   form.className = 'chat-phone-form';
-
   var input = document.createElement('input');
   input.type = 'tel';
   input.id = 'leadPhone';
@@ -343,18 +364,14 @@ function _renderPhoneInput() {
   input.placeholder = '06 XX XX XX XX';
   input.maxLength = 20;
   input.autocomplete = 'tel';
-
   var btn = document.createElement('button');
   btn.className = 'chat-submit-btn';
   btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Valider';
-
   form.appendChild(input);
   form.appendChild(btn);
   elMessages.appendChild(form);
   _scrollToBottom();
-
   setTimeout(function() { input.focus(); }, 100);
-
   btn.addEventListener('click', _submitPhone);
   input.addEventListener('keydown', function(e) { if (e.key === 'Enter') _submitPhone(); });
 }
@@ -364,21 +381,16 @@ function _submitPhone() {
   if (!input) return;
   var raw   = input.value.trim();
   var clean = raw.replace(/[\s\-\.]/g, '');
-
   if (!/^(\+33|0)[0-9]{9}$/.test(clean)) {
     input.classList.add('error');
     input.placeholder = 'Format invalide – ex: 06 12 34 56 78';
     input.focus();
     return;
   }
-
   appendUserMessage(raw);
-
   var form = input.closest('.chat-phone-form');
   if (form) form.remove();
-
   state.phase = 'done';
-
   _showTyping(700, _renderSuccess);
 }
 
@@ -388,23 +400,18 @@ function _renderSuccess() {
   block.innerHTML = '<div class="chat-success-icon">&#9989;</div>' +
     '<p><strong>Parfait, ' + _esc(state.pendingName) + ' !</strong><br>Fabien vous rappellera dans les plus brefs délais.</p>' +
     '<p style="margin-top:6px;font-size:.8rem;color:#94a3b8">Si c\'est urgent, vous pouvez aussi l\'appeler directement :</p>';
-
   var callBtn = document.createElement('a');
   callBtn.href = PHONE_NUMBER;
   callBtn.className = 'chat-call-btn';
   callBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.81 19.79 19.79 0 01.04 2.18 2 2 0 012 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 14.92v2z"/></svg> Appeler maintenant';
-
   block.appendChild(callBtn);
   elMessages.appendChild(block);
-
   elInput.disabled = true;
   elInput.placeholder = 'Conversation terminée.';
   _setSendDisabled(true);
-
   _scrollToBottom();
 }
 
-/* ── Utilitaires DOM ────────────────────────────────────────── */
 function appendBotMessage(html) {
   var msg = document.createElement('div');
   msg.className = 'msg bot';
@@ -443,7 +450,7 @@ function _scrollToBottom() {
 }
 
 function _setSendDisabled(disabled) {
-  elSendBtn.disabled    = disabled;
+  elSendBtn.disabled = disabled;
   elSendBtn.style.opacity = disabled ? '0.4' : '';
 }
 
@@ -455,5 +462,4 @@ function _esc(str) {
     .replace(/"/g, '&quot;');
 }
 
-/* ── Lancement ──────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', initChatbot);
